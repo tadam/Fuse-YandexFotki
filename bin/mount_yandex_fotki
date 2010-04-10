@@ -1,0 +1,14 @@
+#!/usr/bin/perl
+
+use strict;
+use warnings;
+
+# FIXME: it is temporary
+use lib qw(lib);
+
+use Yandex::Fotki::Fuse;
+
+my $fuse = Yandex::Fotki::Fuse->new;
+$fuse->main(mountpoint => "/home/tadam/devel/Yandex-Fotki-Fuse/mnt",
+            mountopts  => "allow_other",
+            threaded   => 0);
