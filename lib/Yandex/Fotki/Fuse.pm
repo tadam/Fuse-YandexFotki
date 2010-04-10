@@ -12,7 +12,6 @@ use POSIX qw(ENOENT EISDIR EINVAL);
 use Data::Dumper;
 
 my $FCACHE;
-my $service_url = "http://api-fotki.yandex.ru/api/users/xryundel/";
 my $client = Atompub::Client->new;
 
 my %files = ();
@@ -21,6 +20,11 @@ sub new {
     my ($class, $params) = @_;
 
     my $self = $class->SUPER::new;
+    foreach (keys %{$params}) {
+        $self->{$_} = $params->{$_};
+    }
+    $self->{fcache} = {};
+    $self->{client} = Atompub::Client->new;
 
     return $self;
 }
@@ -30,10 +34,10 @@ sub getattr {
     my $file = shift;
     $file = filename_fixup($file);
 
-    if ($file eq '.' && !$FCACHE->{$file}) {
-        getdir($file);
+    if ($file eq '.' && !$self->{fcache}->{$file}) {
+        $self->getdir($file);
     }
-    my $file_info = $FCACHE->{$file};
+    my $file_info = $self->{fcache}->{$file};
     return -ENOENT() unless $file_info;
     my ($size) = 0;
     my $modes;
@@ -53,26 +57,30 @@ sub getdir {
     my $dir = shift;
 
     $dir = filename_fixup($dir);
-    my $dir_info = $FCACHE->{$dir};
+    my $dir_info = $self->{fcache}->{$dir};
     return -ENOENT() if ($dir ne '.' && !$dir_info);
 
+    my $client = $self->{client};
+
     if (!$dir_info) {
-        my $service = $client->getService($service_url);
+        my $service = $client->getService($self->{service_url});
         my $workspace = ($service->workspaces)[0];
         my @collections = $workspace->collections;
 
-        $FCACHE->{'.'} = { url => $service_url,
-                           filetype => 'dir',
-                           type => 'collections' };
+        $self->{fcache}->{'.'} = { url      => $self->{service_url},
+                                   filetype => 'dir',
+                                   type     => 'collections' };
         my @files = ('.');
 
         $collections[0]->{_type} = "albums";
         $collections[1]->{_type} = "photos";
         foreach my $collection (@collections[0..1]) {
             push @files, $collection->title;
-            $FCACHE->{'/' . $collection->title} = { url => $collection->href,
-                                                    filetype => 'dir',
-                                                    type => $collection->{_type} };
+            $self->{fcache}->{'/' . $collection->title} = {
+                url => $collection->href,
+                filetype => 'dir',
+                type => $collection->{_type}
+            };
         }
         return (@files, 0);
     } else {
@@ -98,9 +106,11 @@ sub getdir {
                         last;
                     }
                 }
-                $FCACHE->{$dir . "/" . $entry->title} = { url => $link->href,
-                                                          filetype => 'dir',
-                                                          type => 'photos' };
+                $self->{fcache}->{$dir . "/" . $entry->title} = {
+                    url => $link->href,
+                    filetype => 'dir',
+                    type => 'photos'
+                };
             }
             return (@files, 0);
         } elsif ($dir_info->{type} eq 'photos') {
@@ -108,9 +118,11 @@ sub getdir {
             my @files = ('.');
             foreach my $entry ($feed->entries) {
                 push @files, $entry->title;
-                $FCACHE->{$dir . "/" . $entry->title} = { url => $entry->link->href,
-                                                          filetype => 'file',
-                                                          type => 'image' };
+                $self->{fcache}->{$dir . "/" . $entry->title} = {
+                    url => $entry->link->href,
+                    filetype => 'file',
+                    type => 'image'
+                };
             }
             return (@files, 0);
         }

@@ -8,7 +8,12 @@ use lib qw(lib);
 
 use Yandex::Fotki::Fuse;
 
-my $fuse = Yandex::Fotki::Fuse->new;
+my $service_url = "http://api-fotki.yandex.ru/api/users/xryundel/";
+
+my $fuse = Yandex::Fotki::Fuse->new({
+    service_url => $service_url,
+});
+
 $fuse->main(mountpoint => "/home/tadam/devel/Yandex-Fotki-Fuse/mnt",
             mountopts  => "allow_other",
             threaded   => 0);
