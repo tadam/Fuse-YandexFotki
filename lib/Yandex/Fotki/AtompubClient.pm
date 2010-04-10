@@ -3,6 +3,10 @@ package Yandex::Fotki::AtompubClient;
 use strict;
 use warnings;
 
+use base qw(Atompub::Client);
+
+use Atompub::MediaType qw(media_type);
+use HTTP::Request::Common;
 use LWP::UserAgent;
 use Math::BigInt;
 use MIME::Base64 qw(encode_base64);
@@ -15,7 +19,8 @@ sub new {
     my $self = $class->SUPER::new(%params);
     $self->{auth_ua} = LWP::UserAgent->new(agent => "Yandex-Fotki-Fuse/0.0.1",
                                            timeout => 5);
-    $self->{auth_url} = $params{auth_url};
+    $self->{auth_rsa_url} = $params{auth_rsa_url};
+    $self->{auth_token_url} = $params{auth_token_url};
     $self->{auth_libxml} = XML::LibXML->new;
 
     return $self;
@@ -31,7 +36,7 @@ sub munge_request {
                   ));
 
     # no auth if no username specified
-    return unless ($self->username);
+    return unless (defined($self->username));
 
     # there was a bad attempt to make auth in past
     return if ($self->{auth_dealed} && !defined($self->{token}));
@@ -39,7 +44,6 @@ sub munge_request {
     # attempt to get token
     unless ($self->{token}) {
         $self->auth;
-
     }
 
     # all attempts were bad
@@ -51,7 +55,7 @@ sub munge_request {
 
 # AAAAA!
 sub encrypt_rsa {
-    my ($content, $key) = @_;
+    my ($self, $content, $key) = @_;
 
     my ($begin_key, $end_key) = split('#', $key);
     my @data_arr = map {ord($_)} split('', $content);
@@ -101,9 +105,14 @@ sub encrypt_rsa {
 
 sub auth {
     my $self = shift;
+
+    my $username = defined($self->username) ? $self->username : '';
+    my $password = defined($self->password) ? $self->password : '';
+    my $cred_str = qq!<credentials login="$username" password="$password"/>!;
+
     for (1..3) {
         # getting request_id and rsa_key
-        my $resp = $self->{auth_ua}->get($self->{auth_url});
+        my $resp = $self->{auth_ua}->get($self->{auth_rsa_url});
         next unless $resp->is_success;
         my $xml = eval { $self->{auth_libxml}->load_xml(string => $resp->content) };
         next if $@;
@@ -114,24 +123,21 @@ sub auth {
 
 
         # creating credentials_rsa
-        my $credentials_str = '<credentials login="' . $self->username .
-                              ' password="' . $self->password . '/>';
-        my $credentials_rsa = $self->encrypt_rsa($credentials_str, $key);
-        next unless defined($credentials_rsa);
-
+        my $cred_rsa = $self->encrypt_rsa($cred_str, $key);
+        next unless defined($cred_rsa);
 
         # getting token
         my $token_resp = $self->{auth_ua}->request(
-            POST $self->{auth_url},
+            POST $self->{auth_token_url},
                 [ request_id  => $request_id,
-                  credentials => $credentials_rsa ]
+                  credentials => $cred_rsa ]
         );
         next unless $token_resp->is_success;
 
-        my $token_xml = eval { $self->{auth_libxml}->load_xml(string => $resp->content) };
+        my $token_xml = eval { $self->{auth_libxml}->load_xml(string => $token_resp->content) };
         next if $@;
         my $token = $token_xml->findnodes("/response/token")->string_value;
-        next unless $token;
+        next unless defined($token);
 
 
         # setting token

@@ -6,15 +6,14 @@ use warnings;
 use base qw(Fuse::Class);
 
 use Atompub::Client;
+# :mode for S_I* constants
+use Fcntl qw(:mode);
 use Fuse qw(fuse_get_context);
 use POSIX qw(ENOENT EISDIR EINVAL);
 
 use Yandex::Fotki::AtompubClient;
 
 use Data::Dumper;
-
-my $FCACHE;
-my $client = Atompub::Client->new;
 
 my %files = ();
 
@@ -44,11 +43,11 @@ sub getattr {
     my ($size) = 0;
     my $modes;
     if ($file_info->{filetype} eq 'dir') {
-        $modes = (0040 << 9) + 755;
+        $modes = S_IFDIR + 0755;
     } else {
-        $modes = (0100 << 9) + 644;
+        $modes = S_IFREG + 0644;
     }
-    my ($dev, $ino, $rdev, $blocks, $gid, $uid, $nlink, $blksize) = (0,0,0,1,0,0,1,1024);
+    my ($dev, $ino, $rdev, $blocks, $gid, $uid, $nlink, $blksize) = (0, 0, 0, 1, 0, 0, 1, 1024);
     my ($atime, $ctime, $mtime);
     $atime = $ctime = $mtime = time();
     return ($dev, $ino, $modes, $nlink, $uid, $gid, $rdev, $size, $atime, $mtime, $ctime, $blksize, $blocks);
