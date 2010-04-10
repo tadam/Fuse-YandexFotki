@@ -9,6 +9,8 @@ use Atompub::Client;
 use Fuse qw(fuse_get_context);
 use POSIX qw(ENOENT EISDIR EINVAL);
 
+use Yandex::Fotki::AtompubClient;
+
 use Data::Dumper;
 
 my $FCACHE;
@@ -24,7 +26,7 @@ sub new {
         $self->{$_} = $params->{$_};
     }
     $self->{fcache} = {};
-    $self->{client} = Atompub::Client->new;
+    $self->{client} = Yandex::Fotki::AtompubClient->new;
 
     return $self;
 }

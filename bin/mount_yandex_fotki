@@ -9,9 +9,11 @@ use lib qw(lib);
 use Yandex::Fotki::Fuse;
 
 my $service_url = "http://api-fotki.yandex.ru/api/users/xryundel/";
+my $auth_url = "http://auth.mobile.yandex.ru/yamrsa/key/";
 
 my $fuse = Yandex::Fotki::Fuse->new({
     service_url => $service_url,
+    auth_url    => $auth_url
 });
 
 $fuse->main(mountpoint => "/home/tadam/devel/Yandex-Fotki-Fuse/mnt",
