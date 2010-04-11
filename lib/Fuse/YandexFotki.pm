@@ -57,77 +57,15 @@ sub getattr {
         $modes = S_IFDIR + 0777;
     } else {
         $modes = S_IFREG + 0666;
-        if (!defined($file_info->{size}) && defined($file_info->{src_url})) {
-            my $resp = $self->{content_ua}->head($file_info->{src_url});
-            if ($resp->is_success && $resp->header('Content-Length')) {
-                $file_info->{size} = $resp->header('Content-Length');
-            }
-        }
-        $size = $file_info->{size} || 0;
+        $size = $file_info->{size} if defined($file_info->{size});
     }
     my ($dev, $ino, $rdev, $blocks, $gid, $uid, $nlink, $blksize) = (0, 0, 0, 1, 0, 0, 1, 1024);
 
-    my $times = {};
-    foreach (qw/atime ctime mtime/) {
-        $times->{$_} = time();
-    }
     my $type = $file_info->{type};
     my $url = $file_info->{edit_url} || $file_info->{url};
-    # FIXME: in albums must be an 'all_photos' but now
-    #        we haven't this type, now it is a 'photos'
-    if ($type eq 'albums') {
-        my $feed = $self->{client}->getFeed($url);
-        if ($feed) {
-            my $updated = $feed->get(undef, 'updated');
-            if ($updated) {
-                my $time = str2time($updated);
-                if ($time) {
-                    for (qw/atime ctime mtime/) {
-                        $times->{$_} = $time;
-                    }
-                }
-            }
-        }
-    } elsif ($type eq 'photos') {
-        my $entry = $self->{client}->getEntry($url);
-        if ($entry) {
-            for (['published',  'ctime'],
-                 ['app:edited', 'atime'],
-                 ['updated',    'mtime'])
-            {
-                my ($elem_name, $time_name) = @{$_};
-                my $elem = $entry->get(undef, $elem_name);
-                if ($elem) {
-                    my $t = str2time($elem);
-                    if ($t) {
-                        $times->{$time_name} = $t;
-                    }
-                }
-            }
-        }
-    } elsif ($type eq 'image') {
-        my $entry = $self->{client}->getEntry($url);
-        if ($entry) {
-            for (['f:created',  'ctime'],
-                 ['app:edited', 'atime'],
-                 ['published',  'mtime'])
-            {
-                my ($elem_name, $time_name) = @{$_};
-                my $elem = $entry->get(undef, $elem_name);
-                if ($elem) {
-                    my $t = str2time($elem);
-                    if ($t) {
-                        $times->{$time_name} = $t;
-                    }
-                }
-           }
-        }
-    }
 
-    my @a = ($dev, $ino, $modes, $nlink, $uid, $gid, $rdev, $size,
-             $times->{atime}, $times->{mtime}, $times->{ctime}, $blksize, $blocks);
     return ($dev, $ino, $modes, $nlink, $uid, $gid, $rdev, $size,
-            $times->{atime}, $times->{mtime}, $times->{ctime}, $blksize, $blocks);
+            $file_info->{atime}, $file_info->{mtime}, $file_info->{ctime}, $blksize, $blocks);
 }
 
 sub getdir {
@@ -143,63 +81,88 @@ sub getdir {
     if (!$dir_info) {
         my $service = $client->getService($self->{service_url});
         my $workspace = ($service->workspaces)[0];
-        my @collections = $workspace->collections;
+        my $albums_collection = ($workspace->collections)[0];
+        $dir_info = { url      => $albums_collection->href,
+                      type     => 'collection',
+                      filetype => 'dir' };
+        $self->{fcache}->{$dir} = $dir_info;
+    }
 
-        $self->{fcache}->{'.'} = { url      => $self->{service_url},
-                                   filetype => 'dir',
-                                   type     => 'collections' };
+    if ($dir_info->{type} eq 'collection') {
+        my $feed = $client->getFeed($dir_info->{url});
         my @files = ('.');
 
-        $collections[0]->{_type} = "albums";
-        $collections[1]->{_type} = "photos";
-        foreach my $collection (@collections[0..1]) {
-            push @files, $collection->{_type};
-            $self->{fcache}->{'/' . $collection->{_type}} = {
-                url => $collection->href,
-                filetype => 'dir',
-                type => $collection->{_type}
-            };
+        # setting times for root
+        unless (defined($dir_info->{atime})) {
+            $self->_set_filetime($dir_info, $feed);
+        }
+        foreach my $entry ($feed->entries) {
+            push @files, $entry->title;
+            my @links = $entry->link;
+            my ($link, $edit_link);
+            foreach (@links) {
+                if ($_->rel eq 'photos') {
+                    $link = $_;
+                } elsif ($_->rel eq 'edit') {
+                    $edit_link = $_;
+                }
+            }
+
+            my $fname = "/" . $entry->title;
+            unless ($self->{fcache}->{$fname}) {
+                $self->{fcache}->{$fname} = {};
+            }
+            my $finfo = $self->{fcache}->{$fname};
+
+            $finfo->{url}      = $link->href;
+            $finfo->{edit_url} = $edit_link->href;
+            $finfo->{filetype} = 'dir';
+            $finfo->{type}     = 'album';
+
+            # setting times for concrete album
+            unless (defined($finfo->{atime})) {
+                $self->_set_filetime($finfo, $entry);
+            }
         }
         return (@files, 0);
-    } else {
-        if ($dir_info->{type} eq 'collections') {
-            return ('.', 'albums', 'photos', 0);
-        } elsif ($dir_info->{type} eq 'albums') {
-            my $feed = $client->getFeed($dir_info->{url});
-            my @files = ('.');
-            foreach my $entry ($feed->entries) {
-                push @files, $entry->title;
-                my @links = $entry->link;
-                my ($link, $edit_link);
-                foreach (@links) {
-                    if ($_->rel eq 'photos') {
-                        $link = $_;
-                    } elsif ($_->rel eq 'edit') {
-                        $edit_link = $_;
+    } elsif ($dir_info->{type} eq 'album') {
+        my $feed = $client->getFeed($dir_info->{url});
+        my @files = ('.');
+        foreach my $entry ($feed->entries) {
+            my $fname = $entry->title;
+            my $full_fname = $dir . "/" . $fname;
+            my $finfo = $self->{fcache}->{$full_fname};
+            if ($finfo && defined($finfo->{renamed})) {
+                $finfo = $self->{cache}->{ $finfo->{renamed} };
+            }
+            unless ($finfo) {
+                $finfo = {};
+                $finfo->{url}      = $entry->link->href;
+                $finfo->{src_url}  = $entry->content->get_attr('src');
+                $finfo->{filetype} = 'file';
+                $finfo->{type}     = 'photo';
+
+                # setting times, size and extention for concrete photo
+                unless (defined($finfo->{atime})) {
+                    $self->_set_filetime($finfo, $entry);
+                }
+                unless (defined($finfo->{size})) {
+                    $self->_set_filesize_and_ext($finfo);
+                }
+
+                if (my $ext = $finfo->{ext}) {
+                    if ($fname !~ /\.\Q$ext\E$/i) {
+                        $self->{fcache}->{$full_fname}->{renamed} = $full_fname . ".$ext";
+                        $fname .= ".$ext";
+                        $full_fname .= ".$ext";
                     }
                 }
-                $self->{fcache}->{$dir . "/" . $entry->title} = {
-                    url => $link->href,
-                    edit_url => $edit_link->href,
-                    filetype => 'dir',
-                    type => 'photos'
-                };
             }
-            return (@files, 0);
-        } elsif ($dir_info->{type} eq 'photos') {
-            my $feed = $client->getFeed($dir_info->{url});
-            my @files = ('.');
-            foreach my $entry ($feed->entries) {
-                push @files, $entry->title;
-                $self->{fcache}->{$dir . "/" . $entry->title} = {
-                    url => $entry->link->href,
-                    src_url => $entry->content->get_attr('src'),
-                    filetype => 'file',
-                    type => 'image'
-                };
-            }
-            return (@files, 0);
+
+            $self->{fcache}->{$full_fname} = $finfo;
+            push @files, $fname;
         }
+        return (@files, 0);
     }
 }
 
@@ -266,6 +229,7 @@ sub mkdir {
     my ($self, $dir) = @_;
 
     $dir = filename_fixup($dir);
+
     my $dir_info = $self->{fcache}->{$dir};
     my (undef, $parent_dir, $new_dir_title) = File::Spec->splitpath($dir);
     $parent_dir = filename_fixup($parent_dir);
@@ -310,6 +274,80 @@ sub filename_fixup {
     $file =~ s!/$!!;
     $file = '.' unless length($file);
     return $file;
+}
+
+sub _set_filetime {
+    my ($self, $file_info, $descr) = @_;
+
+    # setting defaults
+    $file_info->{atime} = $file_info->{ctime} = $file_info->{mtime} = time();
+
+    if (!$self->{show_filetime} || !$descr) {
+        return;
+    }
+
+    my $type = $file_info->{type};
+    if ($type eq 'collection') {
+        my $updated = $descr->get(undef, 'updated');
+        if ($updated && (my $t = str2time($updated))) {
+            for (qw/atime ctime mtime/) {
+                $file_info->{$_} = $t;
+            }
+        }
+    } elsif ($type eq 'album') {
+        for (['published',  'ctime'],
+             ['app:edited', 'atime'],
+             ['updated',    'mtime'])
+        {
+            my ($elem_name, $time_name) = @{$_};
+            my $elem = $descr->get(undef, $elem_name);
+            if ($elem && (my $t = str2time($elem))) {
+                $file_info->{$time_name} = $t;
+            }
+        }
+    } elsif ($type eq 'photo') {
+        for (['f:created',  'ctime'],
+             ['app:edited', 'atime'],
+             ['published',  'mtime'])
+        {
+            my ($elem_name, $time_name) = @{$_};
+            my $elem = $descr->get(undef, $elem_name);
+            if ($elem && (my $t = str2time($elem))) {
+                $file_info->{$time_name} = $t;
+            }
+        }
+    }
+}
+
+sub _set_filesize_and_ext {
+    my ($self, $file_info) = @_;
+
+    unless ($self->{show_filesize}) {
+        # we set max allowed size on service, because if it
+        # will be 0, then you will can't read this file
+        # (fuse have direct_io option for such files, but it don't supports
+        # in Perl bindings)
+        $file_info->{size} = 20*1024*1024;
+        return;
+    }
+
+    return unless defined($file_info->{src_url});
+
+    my $resp = $self->{content_ua}->head($file_info->{src_url});
+    if ($resp->is_success) {
+        if (my $header = $resp->header('Content-Length')) {
+            $file_info->{size} = $header;
+        }
+        if (my $header = $resp->header('Content-Type')) {
+            if ($header =~ /jpe?g/) {
+                $file_info->{ext} = 'jpg';
+            } elsif ($header =~ /gif/) {
+                $file_info->{ext} = 'gif';
+            } elsif ($header =~ /png/) {
+                $file_info->{ext} = 'png';
+            }
+        }
+    }
 }
 
 1;
