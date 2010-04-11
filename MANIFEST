@@ -1,0 +1,7 @@
+bin/mount_yandex_fotki
+Build.PL
+Changes
+lib/Fuse/YandexFotki.pm
+lib/Fuse/YandexFotki/AtompubClient.pm
+MANIFEST			This list of files
+README

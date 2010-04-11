@@ -3,6 +3,8 @@ package Fuse::YandexFotki;
 use strict;
 use warnings;
 
+our $VERSION = 0.0.1;
+
 use base qw(Fuse::Class);
 
 use Date::Parse;
@@ -311,3 +313,12 @@ sub filename_fixup {
 }
 
 1;
+
+__END__
+
+=head1 NAME
+
+Fuse::YandexFotki - mount photos from Yandex Fotki photohosting (http://fotki.yandex.ru) as VFS
+
+=cut
+

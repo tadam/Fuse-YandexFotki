@@ -3,6 +3,8 @@ package Fuse::YandexFotki::AtompubClient;
 use strict;
 use warnings;
 
+our $VERSION = 0.0.1;
+
 use base qw(Atompub::Client);
 
 use Atompub::MediaType qw(media_type);
@@ -11,6 +13,7 @@ use LWP::UserAgent;
 use Math::BigInt;
 use MIME::Base64 qw(encode_base64);
 use XML::LibXML qw();
+
 
 sub new {
     my $class = shift;
