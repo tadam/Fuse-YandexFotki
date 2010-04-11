@@ -6,10 +6,13 @@ use warnings;
 use base qw(Fuse::Class);
 
 use Atompub::Client;
+use Date::Parse;
 # :mode for S_I* constants
 use Fcntl qw(:mode);
+use File::Spec;
 use Fuse qw(fuse_get_context);
-use POSIX qw(ENOENT EISDIR EINVAL);
+use LWP::UserAgent;
+use POSIX qw(:errno_h :fcntl_h);
 
 use Yandex::Fotki::AtompubClient;
 
@@ -25,7 +28,13 @@ sub new {
         $self->{$_} = $params->{$_};
     }
     $self->{fcache} = {};
-    $self->{client} = Yandex::Fotki::AtompubClient->new;
+    $self->{client} = Yandex::Fotki::AtompubClient->new(
+        timeout        => 10,
+        auth_rsa_url   => $self->{auth_rsa_url},
+        auth_token_url => $self->{auth_token_url},
+    );
+    $self->{client}->username($self->{username});
+    $self->{client}->password($self->{password});
 
     return $self;
 }
@@ -33,6 +42,7 @@ sub new {
 sub getattr {
     my $self = shift;
     my $file = shift;
+    print "getattr file $file\n";
     $file = filename_fixup($file);
 
     if ($file eq '.' && !$self->{fcache}->{$file}) {
@@ -43,19 +53,90 @@ sub getattr {
     my ($size) = 0;
     my $modes;
     if ($file_info->{filetype} eq 'dir') {
-        $modes = S_IFDIR + 0755;
+        $modes = S_IFDIR + 0777;
     } else {
-        $modes = S_IFREG + 0644;
+        $modes = S_IFREG + 0666;
     }
     my ($dev, $ino, $rdev, $blocks, $gid, $uid, $nlink, $blksize) = (0, 0, 0, 1, 0, 0, 1, 1024);
-    my ($atime, $ctime, $mtime);
-    $atime = $ctime = $mtime = time();
-    return ($dev, $ino, $modes, $nlink, $uid, $gid, $rdev, $size, $atime, $mtime, $ctime, $blksize, $blocks);
+
+    my $times = {};
+    foreach (qw/atime ctime mtime/) {
+        $times->{$_} = time();
+    }
+    my $type = $file_info->{type};
+    my $url = $file_info->{edit_url} || $file_info->{url};
+    # FIXME: in albums must be an 'all_photos' but now
+    #        we haven't this type, now it is a 'photos'
+    if ($type eq 'albums') {
+        print "a\n";
+        my $feed = $self->{client}->getFeed($url);
+        print "b\n";
+        if ($feed) {
+            print "c\n";
+            my $updated = $feed->get(undef, 'updated');
+            print "d\n";
+            if ($updated) {
+                print "e\n";
+                my $time = str2time($updated);
+                print "f\n";
+                if ($time) {
+                    print "g\n";
+                    for (qw/atime ctime mtime/) {
+                        print "h\n";
+                        print "time $time\n";
+                        $times->{$_} = $time;
+                    }
+                }
+            }
+        }
+    } elsif ($type eq 'photos') {
+        my $entry = $self->{client}->getEntry($url);
+        if ($entry) {
+            for (['published',  'ctime'],
+                 ['app:edited', 'atime'],
+                 ['updated',    'mtime'])
+            {
+                my ($elem_name, $time_name) = @{$_};
+                my $elem = $entry->get(undef, $elem_name);
+                if ($elem) {
+                    my $t = str2time($elem);
+                    if ($t) {
+                        $times->{$time_name} = $t;
+                    }
+                }
+            }
+        }
+    } elsif ($type eq 'image') {
+        print "get image enty on url $url\n";
+        my $entry = $self->{client}->getEntry($url);
+        if ($entry) {
+            for (['f:created',  'ctime'],
+                 ['app:edited', 'atime'],
+                 ['published',  'mtime'])
+            {
+                my ($elem_name, $time_name) = @{$_};
+                my $elem = $entry->get(undef, $elem_name);
+                if ($elem) {
+                    my $t = str2time($elem);
+                    if ($t) {
+                        $times->{$time_name} = $t;
+                    }
+                }
+           }
+        }
+    }
+
+    my @a = ($dev, $ino, $modes, $nlink, $uid, $gid, $rdev, $size,
+             $times->{atime}, $times->{mtime}, $times->{ctime}, $blksize, $blocks);
+    print join(", ", @a), "\n";
+    return ($dev, $ino, $modes, $nlink, $uid, $gid, $rdev, $size,
+            $times->{atime}, $times->{mtime}, $times->{ctime}, $blksize, $blocks);
 }
 
 sub getdir {
     my $self = shift;
     my $dir = shift;
+    print "getdir $dir\n";
 
     $dir = filename_fixup($dir);
     my $dir_info = $self->{fcache}->{$dir};
@@ -76,8 +157,8 @@ sub getdir {
         $collections[0]->{_type} = "albums";
         $collections[1]->{_type} = "photos";
         foreach my $collection (@collections[0..1]) {
-            push @files, $collection->title;
-            $self->{fcache}->{'/' . $collection->title} = {
+            push @files, $collection->{_type};
+            $self->{fcache}->{'/' . $collection->{_type}} = {
                 url => $collection->href,
                 filetype => 'dir',
                 type => $collection->{_type}
@@ -86,29 +167,24 @@ sub getdir {
         return (@files, 0);
     } else {
         if ($dir_info->{type} eq 'collections') {
-            my $service = $client->getService($dir_info->{url});
-            my $workspace = ($service->workspaces)[0];
-            my @collections = $workspace->collections;
-            my @files = ('.');
-            foreach my $collection (@collections) {
-                push @files, $collection->title;
-            }
-            return (@files, 0);
+            return ('.', 'albums', 'photos', 0);
         } elsif ($dir_info->{type} eq 'albums') {
             my $feed = $client->getFeed($dir_info->{url});
             my @files = ('.');
             foreach my $entry ($feed->entries) {
                 push @files, $entry->title;
                 my @links = $entry->link;
-                my $link;
+                my ($link, $edit_link);
                 foreach (@links) {
                     if ($_->rel eq 'photos') {
                         $link = $_;
-                        last;
+                    } elsif ($_->rel eq 'edit') {
+                        $edit_link = $_;
                     }
                 }
                 $self->{fcache}->{$dir . "/" . $entry->title} = {
                     url => $link->href,
+                    edit_url => $edit_link->href,
                     filetype => 'dir',
                     type => 'photos'
                 };
@@ -130,7 +206,7 @@ sub getdir {
     }
 }
 
-sub open {
+sub e_open {
     my $self = shift;
     # VFS sanity check; it keeps all the necessary state, not much to do here.
     my ($file) = filename_fixup(shift);
@@ -138,6 +214,12 @@ sub open {
     return -ENOENT() unless exists($files{$file});
     return -EISDIR() if $files{$file}{type} & 0040;
     print("open ok\n");
+    return 0;
+}
+
+sub open {
+    my ($self, $file) = @_;
+    print "open file $file\n";
     return 0;
 }
 
@@ -159,8 +241,51 @@ sub read {
     return substr($files{$file}{cont},$off,$buf);
 }
 
+sub write {
+    my ($self, $file, $buffer, $offset) = @_;
+    print "write file $file\n";
+    for (split('', $buffer)) {
+        print ord($_), "\n";
+    }
+    return -1;
+}
+
+sub mkdir {
+    my ($self, $dir) = @_;
+
+    $dir = filename_fixup($dir);
+    my $dir_info = $self->{fcache}->{$dir};
+    my (undef, $parent_dir, $new_dir_title) = File::Spec->splitpath($dir);
+    $parent_dir = filename_fixup($parent_dir);
+    my $parent_dir_info = $self->{fcache}->{$parent_dir};
+
+    my $entry = XML::Atom::Entry->new;
+    $entry->title($new_dir_title);
+    my $r = $self->{client}->createEntry($parent_dir_info->{url}, $entry);
+    if ($r) {
+        return ($self->getdir($parent_dir))[-1];
+    } else {
+        return -EACCES();
+    }
+}
+
+sub rmdir {
+    my ($self, $dir) = @_;
+
+    $dir = filename_fixup($dir);
+    my $dir_info = $self->{fcache}->{$dir};
+
+    if ($self->{client}->deleteEntry($dir_info->{edit_url})) {
+        delete $self->{fcache}->{$dir};
+        return 0;
+    } else {
+        return -EACCES();
+    }
+}
+
 sub statfs {
     my $self = shift;
+    print "statfs\n";
     return (255, 1, 1, 1, 1, 2);
 }
 
