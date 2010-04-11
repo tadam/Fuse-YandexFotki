@@ -42,7 +42,6 @@ sub new {
 sub getattr {
     my $self = shift;
     my $file = shift;
-    print "getattr file $file\n";
     $file = filename_fixup($file);
 
     if ($file eq '.' && !$self->{fcache}->{$file}) {
@@ -68,22 +67,13 @@ sub getattr {
     # FIXME: in albums must be an 'all_photos' but now
     #        we haven't this type, now it is a 'photos'
     if ($type eq 'albums') {
-        print "a\n";
         my $feed = $self->{client}->getFeed($url);
-        print "b\n";
         if ($feed) {
-            print "c\n";
             my $updated = $feed->get(undef, 'updated');
-            print "d\n";
             if ($updated) {
-                print "e\n";
                 my $time = str2time($updated);
-                print "f\n";
                 if ($time) {
-                    print "g\n";
                     for (qw/atime ctime mtime/) {
-                        print "h\n";
-                        print "time $time\n";
                         $times->{$_} = $time;
                     }
                 }
@@ -107,7 +97,6 @@ sub getattr {
             }
         }
     } elsif ($type eq 'image') {
-        print "get image enty on url $url\n";
         my $entry = $self->{client}->getEntry($url);
         if ($entry) {
             for (['f:created',  'ctime'],
@@ -128,7 +117,6 @@ sub getattr {
 
     my @a = ($dev, $ino, $modes, $nlink, $uid, $gid, $rdev, $size,
              $times->{atime}, $times->{mtime}, $times->{ctime}, $blksize, $blocks);
-    print join(", ", @a), "\n";
     return ($dev, $ino, $modes, $nlink, $uid, $gid, $rdev, $size,
             $times->{atime}, $times->{mtime}, $times->{ctime}, $blksize, $blocks);
 }
@@ -136,7 +124,6 @@ sub getattr {
 sub getdir {
     my $self = shift;
     my $dir = shift;
-    print "getdir $dir\n";
 
     $dir = filename_fixup($dir);
     my $dir_info = $self->{fcache}->{$dir};
@@ -285,7 +272,6 @@ sub rmdir {
 
 sub statfs {
     my $self = shift;
-    print "statfs\n";
     return (255, 1, 1, 1, 1, 2);
 }
 
