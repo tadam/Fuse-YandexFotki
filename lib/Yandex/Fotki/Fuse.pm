@@ -7,8 +7,7 @@ use base qw(Fuse::Class);
 
 use Atompub::Client;
 use Date::Parse;
-# :mode for S_I* constants
-use Fcntl qw(:mode);
+use Fcntl qw(:mode); # for S_I* constants
 use File::Spec;
 use Fuse qw(fuse_get_context);
 use LWP::UserAgent;
@@ -33,6 +32,7 @@ sub new {
         auth_rsa_url   => $self->{auth_rsa_url},
         auth_token_url => $self->{auth_token_url},
     );
+    $self->{content_ua} = LWP::UserAgent->new(timeout => 100);
     $self->{client}->username($self->{username});
     $self->{client}->password($self->{password});
 
@@ -55,6 +55,13 @@ sub getattr {
         $modes = S_IFDIR + 0777;
     } else {
         $modes = S_IFREG + 0666;
+        if (!defined($file_info->{size}) && defined($file_info->{src_url})) {
+            my $resp = $self->{content_ua}->head($file_info->{src_url});
+            if ($resp->is_success && $resp->header('Content-Length')) {
+                $file_info->{size} = $resp->header('Content-Length');
+            }
+        }
+        $size = $file_info->{size} || 0;
     }
     my ($dev, $ino, $rdev, $blocks, $gid, $uid, $nlink, $blksize) = (0, 0, 0, 1, 0, 0, 1, 1024);
 
@@ -184,6 +191,7 @@ sub getdir {
                 push @files, $entry->title;
                 $self->{fcache}->{$dir . "/" . $entry->title} = {
                     url => $entry->link->href,
+                    src_url => $entry->content->get_attr('src'),
                     filetype => 'file',
                     type => 'image'
                 };
@@ -205,27 +213,42 @@ sub e_open {
 }
 
 sub open {
-    my ($self, $file) = @_;
+    my ($self, $file, $modes) = @_;
     print "open file $file\n";
     return 0;
 }
 
 sub read {
-    my $self = shift;
-    print "read\n";
-    # return an error numeric, or binary/text string.  (note: 0 means EOF, "0" will
-    # give a byte (ascii "0") to the reading program)
-    my ($file) = filename_fixup(shift);
-    my ($buf,$off) = @_;
-    return -ENOENT() unless exists($files{$file});
-    if(!exists($files{$file}{cont})) {
-        return -EINVAL() if $off > 0;
-        my $context = fuse_get_context();
-        return sprintf("pid=0x%08x uid=0x%08x gid=0x%08x\n",@$context{'pid','uid','gid'});
+    my ($self, $file, $size, $offset) = @_;
+
+    $file = filename_fixup($file);
+    my $file_info = $self->{fcache}->{$file};
+    unless (defined($file_info->{content})) {
+        return -EINVAL() unless $file_info->{src_url};
+        my $resp = $self->{content_ua}->get($file_info->{src_url});
+        return -EINVAL() unless $resp->is_success;
+        $file_info->{content} = $resp->content;
+
+        # FIXME: do we need to do this?
+        $file_info->{size} = $resp->header('Content-Length');
     }
-    return -EINVAL() if $off > length($files{$file}{cont});
-    return 0 if $off == length($files{$file}{cont});
-    return substr($files{$file}{cont},$off,$buf);
+    return -EINVAL() if $offset > $file_info->{size};
+
+    # 'normal' EOF situation
+    if ($offset == $file_info->{size}) {
+        delete $file_info->{content};
+        return 0;
+    }
+
+    my $rv = substr($file_info->{content}, $offset, $size);
+
+    # depending on the file size OS can return EOF to reader process
+    # without you intervention
+    if ($offset + $size >= $file_info->{size}) {
+        delete $file_info->{content};
+    }
+
+    return $rv;
 }
 
 sub write {
@@ -268,6 +291,10 @@ sub rmdir {
     } else {
         return -EACCES();
     }
+}
+
+sub release {
+    return 0;
 }
 
 sub statfs {
