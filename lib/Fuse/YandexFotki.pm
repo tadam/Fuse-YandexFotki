@@ -34,6 +34,7 @@ sub new {
     $self->{content_ua} = LWP::UserAgent->new(timeout => 100);
     $self->{client}->username($self->{username});
     $self->{client}->password($self->{password});
+    $self->{service_url} = $self->{base_service_url} . $self->{mount_username} . "/";
 
     return $self;
 }

@@ -3,21 +3,121 @@
 use strict;
 use warnings;
 
+=head1 NAME
+
+mount_yandex_fotki - console utility for mounting your photos from Yandex.Fotki
+
+=head1 SYNOPSIS
+
+mount_yandex_fotki [options] [mount_username] mountpoint
+
+  mount_username      defines a username which photos you want to mount. Optional if
+                          --username existed
+  mountpoint          specifies mount directory
+
+  options:
+    --username=USERNAME   username that will be used for authorization. If specified, then you
+                              will get safe password request. If will be also used as
+                              C<mount_username> if <mount_username> is omitted.
+    --password=PASSWORD   specifies password from command line (unsafely)
+
+=cut
+
+
 # FIXME: it is temporary
 use lib qw(lib);
 
+use Data::Dumper;
+
+use Getopt::Long;
+use Pod::Usage;
+use Term::ReadPassword;
+
 use Fuse::YandexFotki;
 
-my $service_url = "http://api-fotki.yandex.ru/api/users/xryundel/";
-my $auth_rsa_url = "http://auth.mobile.yandex.ru/yamrsa/key/";
-my $auth_token_url = "http://auth.mobile.yandex.ru/yamrsa/token/";
+my %config = (
+    base_service_url   => 'http://api-fotki.yandex.ru/api/users/',
+    auth_rsa_url       => 'http://auth.mobile.yandex.ru/yamrsa/key/',
+    auth_token_url     => 'http://auth.mobile.yandex.ru/yamrsa/token/',
 
-my $fuse = Fuse::YandexFotki->new({
-    service_url => $service_url,
-    auth_rsa_url => $auth_rsa_url,
-    auth_token_url => $auth_token_url,
-});
+    auth_ua_timeout    => 5,
+    atompub_ua_timeout => 5,
+    content_ua_timeout => 90,
+    ua                 => 'Fuse-YandexFotki/0.0.1',
 
-$fuse->main(mountpoint => "/home/tadam/devel/Yandex-Fotki-Fuse/mnt",
-            mountopts  => "allow_other",
-            threaded   => 0);
+    show_filetime      => 1,
+    show_filesize      => 1,
+    add_file_ext       => 1,
+    rename_same_fnames => 1,
+    create_meta_files  => 1,
+    default_image_size => undef,
+
+    # cache_options in future
+
+    # fuse 'mountopts' also here
+    mountopts          => "allow_other",
+    threaded           => 0,
+
+    work_log           => '/dev/zero',
+    debug_log          => '/dev/zero',
+);
+
+my $fuse;
+{
+    my $help;
+    my ($username, $password);
+    GetOptions(
+        "username=s"     => \$username,
+        "password=s"     => \$password,
+        "help"           => \$help,
+    ) or pod2usage(1);
+    $config{username} = $username;
+    $config{password} = $password;
+
+    pod2usage(1) if $help;
+    if (scalar(@ARGV) == 2) {
+        $config{mount_username} = shift;
+        $config{mountpoint} = shift;
+    } elsif (scalar(@ARGV) == 1) {
+        pod2usage(1) unless defined($config{username});
+        $config{mount_username} = $config{username};
+        $config{mountpoint} = shift;
+    } else {
+        pod2usage(1);
+    }
+    if (defined($config{password}) && !defined($config{username})) {
+        pod2usage(1);
+    }
+
+    while (1) {
+        unless (defined($config{username})) {
+            $fuse = Fuse::YandexFotki->new(\%config);
+            last;
+        }
+        unless (defined($config{password})) {
+            $config{password} = read_password('password: ');
+            redo unless defined($config{password});
+        }
+        $fuse = Fuse::YandexFotki->new(\%config);
+        $fuse->{client}->auth;
+        if ($fuse->{client}->{auth_error}) {
+            print "Auth error: $fuse->{client}->{auth_error}.\nRetry [Y/n]: ";
+            my $r = <>;
+            if ($r =~ /^\s*n\s*$/i) {
+                exit;
+            } else {
+                $config{password} = undef;
+                redo;
+            }
+        } else {
+            last;
+        }
+    }
+}
+
+# close STDIN, STDOUT, STDERR here
+
+
+$fuse->main(mountpoint => $config{mountpoint},
+            mountopts  => $config{mountopts},
+            threaded   => $config{threaded});

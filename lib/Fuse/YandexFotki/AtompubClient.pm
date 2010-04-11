@@ -103,6 +103,8 @@ sub encrypt_rsa {
     my $rsa = encode_base64($out, '');
 }
 
+# TODO: - make more clean code,
+#       - extract <error> from response
 sub auth {
     my $self = shift;
 
@@ -110,41 +112,64 @@ sub auth {
     my $password = defined($self->password) ? $self->password : '';
     my $cred_str = qq!<credentials login="$username" password="$password"/>!;
 
-    for (1..3) {
-        # getting request_id and rsa_key
-        my $resp = $self->{auth_ua}->get($self->{auth_rsa_url});
-        next unless $resp->is_success;
-        my $xml = eval { $self->{auth_libxml}->load_xml(string => $resp->content) };
-        next if $@;
-
-        my $key = $xml->findnodes("/response/key")->string_value;
-        my $request_id = $xml->findnodes("/response/request_id")->string_value;
-        next if (!defined($key) || !defined($request_id));
-
-
-        # creating credentials_rsa
-        my $cred_rsa = $self->encrypt_rsa($cred_str, $key);
-        next unless defined($cred_rsa);
-
-        # getting token
-        my $token_resp = $self->{auth_ua}->request(
-            POST $self->{auth_token_url},
-                [ request_id  => $request_id,
-                  credentials => $cred_rsa ]
-        );
-        next unless $token_resp->is_success;
-
-        my $token_xml = eval { $self->{auth_libxml}->load_xml(string => $token_resp->content) };
-        next if $@;
-        my $token = $token_xml->findnodes("/response/token")->string_value;
-        next unless defined($token);
-
-
-        # setting token
-        $self->{token} = $token;
-        last;
+    # getting request_id and rsa_key
+    my $resp = $self->{auth_ua}->get($self->{auth_rsa_url});
+    unless ($resp->is_success) {
+        $self->{auth_error} = "Getting RSA key from $self->{auth_rsa_url} " .
+                              "returned error code " . $resp->code .
+                              " with message [" . (defined($resp->content) ? $resp->content : "") . "]";
+        return;
     }
-    $self->{auth_dealed} = 1;
+    my $xml = eval { $self->{auth_libxml}->load_xml(string => $resp->content) };
+    if ($@) {
+        $self->{auth_error} = "Couldn't parse XML from $self->{auth_rsa_url}: $@";
+        return;
+    }
+
+    my $key = $xml->findnodes("/response/key")->string_value;
+    my $request_id = $xml->findnodes("/response/request_id")->string_value;
+    if (!defined($key) || !defined($request_id)) {
+        $self->{auth_error} = "Couldn't find <key> or <request_id> from $self->{auth_rsa_url} response. " .
+                              "Response was:\n" . $resp->content;
+        return;
+    }
+
+    # creating credentials_rsa
+    my $cred_rsa = $self->encrypt_rsa($cred_str, $key);
+    unless (defined($cred_rsa)) {
+        $self->{auth_error} = "Can't create encrypt_rsa with key $key\n";
+        return;
+    }
+
+    # getting token
+    my $token_resp = $self->{auth_ua}->request(
+        POST $self->{auth_token_url},
+            [ request_id  => $request_id,
+              credentials => $cred_rsa ]
+    );
+    unless ($token_resp->is_success) {
+        $self->{auth_error} = "Getting token from $self->{auth_token_url} " .
+                              "returned error code " . $token_resp->code .
+                              " with message [" . (defined($token_resp->content) ? $token_resp->content : "") . "]";
+        return;
+    }
+
+    my $token_xml = eval { $self->{auth_libxml}->load_xml(string => $token_resp->content) };
+    if ($@) {
+        $self->{auth_error} = "Couldn't parse XML from $self->{auth_token_url}: $@";
+        return;
+    }
+    my $token = $token_xml->findnodes("/response/token")->string_value;
+    unless (defined($token)) {
+        $self->{auth_error} = "Couldn't find <token> or <request_id> from $self->{auth_token_url} response. " .
+                              "Response was:\n" . $resp->content;
+        return;
+    }
+
+    # setting token
+    $self->{token} = $token;
+
+    return;
 }
 
 1;
