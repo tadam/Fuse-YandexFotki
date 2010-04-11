@@ -1,4 +1,4 @@
-package Yandex::Fotki::AtompubClient;
+package Fuse::YandexFotki::AtompubClient;
 
 use strict;
 use warnings;

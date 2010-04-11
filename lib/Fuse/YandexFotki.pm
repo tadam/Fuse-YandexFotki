@@ -1,11 +1,10 @@
-package Yandex::Fotki::Fuse;
+package Fuse::YandexFotki;
 
 use strict;
 use warnings;
 
 use base qw(Fuse::Class);
 
-use Atompub::Client;
 use Date::Parse;
 use Fcntl qw(:mode); # for S_I* constants
 use File::Spec;
@@ -13,7 +12,7 @@ use Fuse qw(fuse_get_context);
 use LWP::UserAgent;
 use POSIX qw(:errno_h :fcntl_h);
 
-use Yandex::Fotki::AtompubClient;
+use Fuse::YandexFotki::AtompubClient;
 
 use Data::Dumper;
 
@@ -27,7 +26,7 @@ sub new {
         $self->{$_} = $params->{$_};
     }
     $self->{fcache} = {};
-    $self->{client} = Yandex::Fotki::AtompubClient->new(
+    $self->{client} = Fuse::YandexFotki::AtompubClient->new(
         timeout        => 10,
         auth_rsa_url   => $self->{auth_rsa_url},
         auth_token_url => $self->{auth_token_url},
