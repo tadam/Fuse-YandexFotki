@@ -88,82 +88,116 @@ sub getdir {
         $self->{fcache}->{$dir} = $dir_info;
     }
 
-    if ($dir_info->{type} eq 'collection') {
-        my $feed = $client->getFeed($dir_info->{url});
-        my @files = ('.');
-
-        # setting times for root
-        unless (defined($dir_info->{atime})) {
-            $self->_set_filetime($dir_info, $feed);
+    my @files = ('.');
+    my $feed_url = $dir_info->{url};
+    while (1) {
+        my $feed = $client->getFeed($feed_url);
+        my $add_files;
+        if ($dir_info->{type} eq 'collection') {
+            $add_files = $self->_getdir_collection($feed, $dir, $dir_info);
+        } elsif ($dir_info eq 'album') {
+            $add_files = $self->_getdir_album($feed, $dir, $dir_info);
         }
-        foreach my $entry ($feed->entries) {
-            push @files, $entry->title;
-            my @links = $entry->link;
-            my ($link, $edit_link);
-            foreach (@links) {
-                if ($_->rel eq 'photos') {
-                    $link = $_;
-                } elsif ($_->rel eq 'edit') {
-                    $edit_link = $_;
-                }
+        if ($add_files && ref($add_files) eq 'ARRAY' && @{$add_files}) {
+            push @files, @{$add_files};
+        }
+
+        my @links = $feed->links;
+        $feed_url = undef;
+        foreach (@links) {
+            if ($_->rel eq 'next') {
+                $feed_url = $_->href;
             }
+        }
+        redo if ($feed_url);
+        last;
+    }
 
-            my $fname = "/" . $entry->title;
-            unless ($self->{fcache}->{$fname}) {
-                $self->{fcache}->{$fname} = {};
+    return (@files, 0);
+}
+
+sub _getdir_collection {
+    my ($self, $feed, $dir, $dir_info) = @_;
+
+    my @files = ();
+
+    # setting times for root
+    unless (defined($dir_info->{atime})) {
+        $self->_set_filetime($dir_info, $feed);
+    }
+    foreach my $entry ($feed->entries) {
+        push @files, $entry->title;
+        my @links = $entry->link;
+        my ($link, $edit_link);
+        foreach (@links) {
+            if ($_->rel eq 'photos') {
+                $link = $_;
+            } elsif ($_->rel eq 'edit') {
+                $edit_link = $_;
             }
-            my $finfo = $self->{fcache}->{$fname};
+        }
 
-            $finfo->{url}      = $link->href;
-            $finfo->{edit_url} = $edit_link->href;
-            $finfo->{filetype} = 'dir';
-            $finfo->{type}     = 'album';
+        my $fname = "/" . $entry->title;
+        unless ($self->{fcache}->{$fname}) {
+            $self->{fcache}->{$fname} = {};
+        }
+        my $finfo = $self->{fcache}->{$fname};
 
-            # setting times for concrete album
+        $finfo->{url}      = $link->href;
+        $finfo->{edit_url} = $edit_link->href;
+        $finfo->{filetype} = 'dir';
+        $finfo->{type}     = 'album';
+
+        # setting times for concrete album
+        unless (defined($finfo->{atime})) {
+            $self->_set_filetime($finfo, $entry);
+        }
+    }
+
+    return \@files;
+}
+
+
+sub _getdir_album {
+    my ($self, $feed, $dir, $dir_info) = @_;
+
+    my @files = ();
+    foreach my $entry ($feed->entries) {
+        my $fname = $entry->title;
+        my $full_fname = $dir . "/" . $fname;
+        my $finfo = $self->{fcache}->{$full_fname};
+        if ($finfo && defined($finfo->{renamed})) {
+            $finfo = $self->{cache}->{ $finfo->{renamed} };
+        }
+        unless ($finfo) {
+            $finfo = {};
+            $finfo->{url}      = $entry->link->href;
+            $finfo->{src_url}  = $entry->content->get_attr('src');
+            $finfo->{filetype} = 'file';
+            $finfo->{type}     = 'photo';
+
+            # setting times, size and extention for concrete photo
             unless (defined($finfo->{atime})) {
                 $self->_set_filetime($finfo, $entry);
             }
-        }
-        return (@files, 0);
-    } elsif ($dir_info->{type} eq 'album') {
-        my $feed = $client->getFeed($dir_info->{url});
-        my @files = ('.');
-        foreach my $entry ($feed->entries) {
-            my $fname = $entry->title;
-            my $full_fname = $dir . "/" . $fname;
-            my $finfo = $self->{fcache}->{$full_fname};
-            if ($finfo && defined($finfo->{renamed})) {
-                $finfo = $self->{cache}->{ $finfo->{renamed} };
-            }
-            unless ($finfo) {
-                $finfo = {};
-                $finfo->{url}      = $entry->link->href;
-                $finfo->{src_url}  = $entry->content->get_attr('src');
-                $finfo->{filetype} = 'file';
-                $finfo->{type}     = 'photo';
-
-                # setting times, size and extention for concrete photo
-                unless (defined($finfo->{atime})) {
-                    $self->_set_filetime($finfo, $entry);
-                }
-                unless (defined($finfo->{size})) {
-                    $self->_set_filesize_and_ext($finfo);
-                }
-
-                if (my $ext = $finfo->{ext}) {
-                    if ($fname !~ /\.\Q$ext\E$/i) {
-                        $self->{fcache}->{$full_fname}->{renamed} = $full_fname . ".$ext";
-                        $fname .= ".$ext";
-                        $full_fname .= ".$ext";
-                    }
-                }
+            unless (defined($finfo->{size})) {
+                $self->_set_filesize_and_ext($finfo);
             }
 
-            $self->{fcache}->{$full_fname} = $finfo;
-            push @files, $fname;
+            if (my $ext = $finfo->{ext}) {
+                if ($fname !~ /\.\Q$ext\E$/i) {
+                    $self->{fcache}->{$full_fname}->{renamed} = $full_fname . ".$ext";
+                    $fname .= ".$ext";
+                    $full_fname .= ".$ext";
+                }
+            }
         }
-        return (@files, 0);
+
+        $self->{fcache}->{$full_fname} = $finfo;
+        push @files, $fname;
     }
+
+    return \@files;
 }
 
 sub e_open {
