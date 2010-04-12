@@ -31,6 +31,7 @@ use Data::Dumper;
 
 use Getopt::Long;
 use Pod::Usage;
+use POSIX;
 use Term::ReadPassword;
 
 use Fuse::YandexFotki;
@@ -58,8 +59,8 @@ my %config = (
     mountopts          => "allow_other",
     threaded           => 0,
 
-    work_log           => '/dev/zero',
-    debug_log          => '/dev/zero',
+    work_log           => '/dev/null',
+    debug_log          => '/dev/null',
 );
 
 my $fuse;
@@ -115,7 +116,15 @@ my $fuse;
     }
 }
 
-# close STDIN, STDOUT, STDERR here
+
+if (defined($config{work_log})) {
+    open STDOUT, ">>", $config{work_log} or die "Can't write to '$config{work_log}'";
+}
+if (defined($config{debug_log})) {
+    open STDERR, ">>", $config{debug_log} or die "Can't write to '$config{debug_log}'";
+}
+# Something strange here. STDIN really closes, but console remains blocked
+open STDIN, "<", '/dev/null' or die "Can't read from '/dev/null'";
 
 
 $fuse->main(mountpoint => $config{mountpoint},
