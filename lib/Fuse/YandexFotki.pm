@@ -3,7 +3,7 @@ package Fuse::YandexFotki;
 use strict;
 use warnings;
 
-our $VERSION = 0.0.1;
+our $VERSION = 0.0.2;
 
 use base qw(Fuse::Class);
 
@@ -11,8 +11,10 @@ use Date::Parse;
 use Fcntl qw(:mode); # for S_I* constants
 use File::Spec;
 use Fuse qw(fuse_get_context);
+use HTTP::Request::Common;
 use LWP::UserAgent;
 use POSIX qw(:errno_h :fcntl_h);
+use XML::Atom::Entry;
 
 use Fuse::YandexFotki::AtompubClient;
 
@@ -52,15 +54,12 @@ sub getattr {
     my ($size) = 0;
     my $modes;
     if ($file_info->{filetype} eq 'dir') {
-        $modes = S_IFDIR + 0777;
+        $modes = S_IFDIR + 0755;
     } else {
-        $modes = S_IFREG + 0666;
+        $modes = S_IFREG + 0644;
         $size = $file_info->{size} if defined($file_info->{size});
     }
     my ($dev, $ino, $rdev, $blocks, $gid, $uid, $nlink, $blksize) = (0, 0, 0, 1, 0, 0, 1, 1024);
-
-    my $type = $file_info->{type};
-    my $url = $file_info->{edit_url} || $file_info->{url};
 
     return ($dev, $ino, $modes, $nlink, $uid, $gid, $rdev, $size,
             $file_info->{atime}, $file_info->{mtime}, $file_info->{ctime}, $blksize, $blocks);
@@ -141,6 +140,7 @@ sub _getdir_collection {
                 $finfo->{edit_url} = $_->href;
             }
         }
+        $finfo->{id} = $entry->get(undef, 'id'); # album uniq id, needed for upload
         $finfo->{filetype} = 'dir';
         $finfo->{type}     = 'album';
 
@@ -243,12 +243,15 @@ sub read {
 }
 
 sub write {
-    my ($self, $file, $buffer, $offset) = @_;
-    print "write file $file\n";
-    for (split('', $buffer)) {
-        print ord($_), "\n";
-    }
-    return -1;
+    my ($self, $fname, $buffer, $offset) = @_;
+
+    $fname = filename_fixup($fname);
+    my $content = $self->{fcache}->{$fname}->{content};
+    return -EBADF() unless (defined($content));
+    substr($content, $offset, length($buffer), $buffer);
+    $self->{fcache}->{$fname}->{content} = $content;
+
+    return length($buffer);
 }
 
 sub mkdir {
@@ -292,6 +295,104 @@ sub rmdir {
 }
 
 sub release {
+    my ($self, $fname, $modes) = @_;
+
+    $fname = filename_fixup($fname);
+    my $content = $self->{fcache}->{$fname}->{content};
+    # FIXME: make goto for this calls
+    unless ($content) {
+        delete $self->{fcache}->{$fname};
+        return 0;
+    }
+
+    my (undef, $parent_dir, $image_title) = File::Spec->splitpath($fname);
+    $parent_dir = filename_fixup($parent_dir);
+    my $parent_dir_info = $self->{fcache}->{$parent_dir};
+    if (!$parent_dir_info || !defined($image_title)) {
+        delete $self->{fcache}->{$fname};
+        return 0;
+    }
+
+    my $album_edit_url = $parent_dir_info->{edit_url};
+    unless ($album_edit_url) {
+        delete $self->{fcache}->{$fname};
+        return 0;
+    }
+
+    my ($album_id) = $album_edit_url =~ m!/(\d+)/$!;
+    unless ($album_id) {
+        delete $self->{fcache}->{$fname};
+        return 0;
+    }
+
+    # TODO: We can't use here $self->{client}->createEntry,
+    #         because there are many checks of XML and so on.
+    #         Maybe we need accurately rewrite this in
+    #         Fuse::YandexFotki::AtompubClient.
+    #       Also service now incorrectly handles 'Slug' header.
+    #         It ignores this header and make photo with title 'Фотка'
+    #         instead. So we use alternative url for upload.
+    my $req = POST 'http://api-fotki.yandex.ru/post/',
+        'Content-Type' => 'form-data',
+        'Content' => [
+             image => [
+                 undef,
+                 $image_title,
+                 'Content-Type' => 'image/jpeg',
+                 'Content'      => $content,
+             ],
+             pub_channel      => 'Fuse-YandexFotki',
+             # app_platform     => ?
+             app_version      => $VERSION,
+             title            => $image_title,
+             # tags             => ?
+             yaru             => 0,
+             access_type      => 'public',
+             album            => $album_id, # Here must be not <id>, just numeric id
+                                            # of this album. Documentation bad in this place.
+             disable_comments => 'false',
+             xxx              => 'false',
+             hide_orig        => 'false',
+             storage_private  => 'false'
+        ];
+
+    # hack for adding Authorization header
+    $req = $self->{client}->munge_request($req);
+    my $resp = $self->{content_ua}->request($req);
+    unless ($resp->is_success) {
+        delete $self->{fcache}->{$fname};
+        return 0;
+    }
+
+    $self->getdir($parent_dir);
+    delete $self->{fcache}->{$fname}->{dirty};
+    delete $self->{fcache}->{$fname}->{content};
+
+    return 0;
+}
+
+sub flush {
+    my ($self, $fname) = @_;
+    return 0;
+}
+
+sub mknod {
+    my ($self, $fname, $modes, $device_num) = @_;
+    $fname = filename_fixup($fname);
+    $self->{fcache}->{$fname} = { type => 'image',
+                                  filetype => 'file',
+                                  atime    => time(),
+                                  ctime    => time(),
+                                  mtime    => time(),
+                                  content  => '',
+                                  size     => 0,
+                                  dirty    => 1,
+                                };
+    return 0;
+}
+
+sub rename {
+    my ($self, $old_fname, $new_fname) = @_;
     return 0;
 }
 

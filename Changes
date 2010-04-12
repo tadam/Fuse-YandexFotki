@@ -1,4 +1,10 @@
 Revision history for Fuse-YandexFotki
 
+0.0.2 12/04/2010
+        + remove and creation of photos
+        + daemonization and writing logs
+        + listing of long feeds (if more than 100 albums or photos in feed)
+        + add extention support
+
 0.0.1 12/04/2010
         First version.

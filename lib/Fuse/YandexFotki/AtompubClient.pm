@@ -3,7 +3,7 @@ package Fuse::YandexFotki::AtompubClient;
 use strict;
 use warnings;
 
-our $VERSION = 0.0.1;
+our $VERSION = 0.0.2;
 
 use base qw(Atompub::Client);
 
@@ -54,6 +54,8 @@ sub munge_request {
 
     # send auth header
     $req->header('Authorization' => qq!FimpToken realm="fotki.yandex.ru", token="$self->{token}"!);
+
+    return $req;
 }
 
 # AAAAA!
