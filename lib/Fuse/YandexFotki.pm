@@ -18,8 +18,6 @@ use Fuse::YandexFotki::AtompubClient;
 
 use Data::Dumper;
 
-my %files = ();
-
 sub new {
     my ($class, $params) = @_;
 
@@ -95,7 +93,7 @@ sub getdir {
         my $add_files;
         if ($dir_info->{type} eq 'collection') {
             $add_files = $self->_getdir_collection($feed, $dir, $dir_info);
-        } elsif ($dir_info eq 'album') {
+        } elsif ($dir_info->{type} eq 'album') {
             $add_files = $self->_getdir_album($feed, $dir, $dir_info);
         }
         if ($add_files && ref($add_files) eq 'ARRAY' && @{$add_files}) {
@@ -127,15 +125,6 @@ sub _getdir_collection {
     }
     foreach my $entry ($feed->entries) {
         push @files, $entry->title;
-        my @links = $entry->link;
-        my ($link, $edit_link);
-        foreach (@links) {
-            if ($_->rel eq 'photos') {
-                $link = $_;
-            } elsif ($_->rel eq 'edit') {
-                $edit_link = $_;
-            }
-        }
 
         my $fname = "/" . $entry->title;
         unless ($self->{fcache}->{$fname}) {
@@ -143,8 +132,15 @@ sub _getdir_collection {
         }
         my $finfo = $self->{fcache}->{$fname};
 
-        $finfo->{url}      = $link->href;
-        $finfo->{edit_url} = $edit_link->href;
+
+        my @links = $entry->link;
+        foreach (@links) {
+            if ($_->rel eq 'photos') {
+                $finfo->{url} = $_->href;
+            } elsif ($_->rel eq 'edit') {
+                $finfo->{edit_url} = $_->href;
+            }
+        }
         $finfo->{filetype} = 'dir';
         $finfo->{type}     = 'album';
 
@@ -171,10 +167,18 @@ sub _getdir_album {
         }
         unless ($finfo) {
             $finfo = {};
-            $finfo->{url}      = $entry->link->href;
             $finfo->{src_url}  = $entry->content->get_attr('src');
             $finfo->{filetype} = 'file';
             $finfo->{type}     = 'photo';
+
+            my @links = $entry->link;
+            foreach (@links) {
+                if ($_->rel eq 'self') {
+                    $finfo->{url} = $_->href;
+                } elsif ($_->rel eq 'edit') {
+                    $finfo->{edit_url} = $_->href;
+                }
+            }
 
             # setting times, size and extention for concrete photo
             unless (defined($finfo->{atime})) {
@@ -200,20 +204,8 @@ sub _getdir_album {
     return \@files;
 }
 
-sub e_open {
-    my $self = shift;
-    # VFS sanity check; it keeps all the necessary state, not much to do here.
-    my ($file) = filename_fixup(shift);
-    print("open called\n");
-    return -ENOENT() unless exists($files{$file});
-    return -EISDIR() if $files{$file}{type} & 0040;
-    print("open ok\n");
-    return 0;
-}
-
 sub open {
     my ($self, $file, $modes) = @_;
-    print "open file $file\n";
     return 0;
 }
 
@@ -291,6 +283,12 @@ sub rmdir {
     } else {
         return -EACCES();
     }
+}
+
+{
+    no strict;
+    no warnings;
+    *unlink = \&rmdir;
 }
 
 sub release {
