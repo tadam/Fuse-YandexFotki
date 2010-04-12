@@ -11,6 +11,7 @@ my $mb = Module::Build->new(
         'Fcntl'              => 0,
         'File::Spec'         => 0,
         'Fuse'               => 0.09,
+        'Fuse::Class'        => 0.01,
         'Getopt::Long'       => 2.33,
         'LWP::UserAgent'     => 0,
         'Math::BigInt'       => 0,
