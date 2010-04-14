@@ -525,8 +525,37 @@ sub mknod {
 }
 
 sub rename {
-    my ($self, $old_fname, $new_fname) = @_;
-    return 0;
+    my ($self, $old_full_fname, $new_full_fname) = @_;
+    my (undef, $old_parent_dir, $old_fname) = File::Spec->splitpath($old_full_fname);
+    my (undef, $new_parent_dir, $new_fname) = File::Spec->splitpath($new_full_fname);
+    $old_parent_dir = filename_fixup($old_parent_dir);
+    $new_parent_dir = filename_fixup($new_parent_dir);
+
+    my $finfo = $self->{fcache}->{$old_full_fname};
+    my $edit_url = $finfo->{edit_url};
+    my $entry = $self->{client}->getEntry($edit_url);
+    if ($old_fname ne $new_fname) {
+        $entry->title($new_fname);
+    }
+    if ($old_parent_dir ne $new_parent_dir) {
+        if ($finfo->{filetype} eq 'dir') {
+            return -EACCES(); # moving albums from one to another isn't supports now
+        }
+        my $new_parent_finfo = $self->{fcache}->{$new_parent_dir};
+        my $new_album_url = $new_parent_finfo->{edit_url};
+        my @links = $entry->link;
+        foreach (@links) {
+            if ($_->rel eq 'album') {
+                print "setting href";
+                $_->set_attr('href', $new_album_url);
+            }
+        }
+    }
+
+    if ($self->{client}->updateEntry($edit_url, $entry)) {
+        return 0;
+    }
+    return -EACCES();
 }
 
 sub statfs {
