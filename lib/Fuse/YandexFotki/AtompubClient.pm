@@ -47,8 +47,24 @@ use XML::LibXML qw();
 
 =item new
 
-Makes new instance of Fuse::YandexFotki::AtompubClient. It takes additionally two mandatory params: C<auth_rsa_url> and C<auth_token_rsa_url>.
-First is an url where module takes RSA key for encrypting, second is an url that checks encryped by this RSA key credentials and gives a token that confirms your authorization.
+Makes new instance of Fuse::YandexFotki::AtompubClient. It takes the same parameters
+as Atompub::Client and also three additional params:
+
+=over 4
+
+=item auth_rsa_url (mandatory)
+
+Url for taking RSA key for encrypting.
+
+=item auth_token_url (mandatory)
+
+Url for checking encryped by RSA key credentials and taking a token that confirms your authorization.
+
+=item auth_token_realm (optional)
+
+This value indicates the service for which given token. It sends every time in Authorization header. For Yandex Fotki it must be setted to 'fotki.yandex.ru'.
+
+=back
 
 =cut
 
@@ -68,7 +84,7 @@ sub new {
     my $self = $class->SUPER::new(%params);
     $self->{auth_rsa_url} = $auth_rsa_url;
     $self->{auth_token_url} = $auth_token_url;
-    $self->{auth_tonen_realm} = $auth_token_realm;
+    $self->{auth_token_realm} = $auth_token_realm;
     $self->{auth_libxml} = XML::LibXML->new;
 
     return $self;
@@ -216,7 +232,6 @@ sub encrypt_rsa {
         $out .= chr(hex(substr($hex_out, $i, 2)));
     }
     my $rsa = encode_base64($out, '');
-    print "content $content, key $key, rsa $rsa\n";
 
     return $rsa;
 }
@@ -255,7 +270,9 @@ sub munge_request {
     return unless (defined($self->{token}));
 
     # add auth header
-    $req->header('Authorization' => qq!FimpToken realm="fotki.yandex.ru", token="$self->{token}"!);
+    my $token = $self->token;
+    my $realm = $self->{auth_token_realm};
+    $req->header('Authorization' => qq!FimpToken realm="$realm", token="$token"!);
 
     return $req;
 }

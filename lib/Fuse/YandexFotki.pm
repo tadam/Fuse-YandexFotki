@@ -5,12 +5,33 @@ use warnings;
 
 our $VERSION = 0.0.3;
 
+=head1 NAME
+
+Fuse::YandexFotki - mount photos from Yandex Fotki photohosting as VFS
+
+=head1 SYNOPSIS
+
+  use Fuse::YandexFotki;
+  my $yf_fuse = Fuse::YandexFotki->new($many_params);
+  $yf_fuse->main(mountpoint => "/my/mnt/path",
+                 mountopts  => "allow_other",
+                 threaded   => 0);
+
+=head1 DESCRIPTION
+
+This module mount photos from Yandex Fotki (L<http://fotki.yandex.ru>) as virtual
+file system using for this purpose FUSE. You can create/delete albums as directory in mounted FS, upload and download photos from Yandex Fotki as plain files.
+
+For using this module just as typical user see L<mount_yandex_fotki> program.
+
+=cut
+
 use base qw(Fuse::Class);
 
+use Carp qw(croak);
 use Date::Parse;
 use Fcntl qw(:mode); # for S_I* constants
 use File::Spec;
-use Fuse qw(fuse_get_context);
 use HTTP::Request::Common;
 use LWP::UserAgent;
 use POSIX qw(:errno_h :fcntl_h);
@@ -20,23 +41,123 @@ use Fuse::YandexFotki::AtompubClient;
 
 use Data::Dumper;
 
+=head1 METHODS
+
+=over 4
+
+=item new($params)
+
+Creates new instance of Fuse::YandexFotki and returns it.
+It takes a hashref of params, you can see an example of using this
+params in L<mount_yandex_fotki> program.
+
+=over 4
+
+=item base_service_url
+
+It is a base url for constructing a service document url from which starts
+all work with Yandex Fotki. Now it have a value C<http://api-fotki.yandex.ru/api/users/>.
+To this base url adds a C<mount_username> for getting service document by url C<http://api-fotki.yandex.ru/api/<mount_username_here>/>.
+
+=item mount_username
+
+Username of Yandex Fotki user, which photos you want to mount.
+
+=item atompub_client_params
+
+Hashref of params that will be passed to Atompub client.
+See L<Fuse::YandexFotki::AtompubClient> for getting detailed description of this params.
+Here you pass some options for Atompub UserAgent and urls for authorization.
+
+=item username (optional)
+
+Username by which you want to have access to photos. It is a login on Yandex.
+
+=item password (optional)
+
+Password for C<username>.
+
+=item content_ua_params (optional)
+
+Hashref of params similar to LWP::UserAgent.
+
+Module uses two UserAgents for work. One is a UserAgent for atompub client (see
+C<atompub_client_params> for this). It makes all work for getting metadata about photos.
+And second is a UserAgent for uploading/fetching photos.
+
+You can set different timeouts for these UserAgents, for example.
+
+=item show_filetime (optional)
+
+This flag indicates that module must set proper access, change and modification times
+for files. Theses values will be extracted one time and placed in memory.
+
+If flag not setted (by default), then these values will be setted to current time.
+
+=item show_filesize (optional)
+
+This flag indicates, that you want to see the size of your photos.
+For this purpose module makes HEAD request to files one time and saves getted values
+('Content-Length' header) in memory.
+
+By default this flag is diabled and size of all you files will be 20 Mb (max size on the
+service). Module sets this size because if it will be a zero, you will can't read
+such files (it controls by direct_io flag in the Fuse, but Perl bindings haven't
+this flag).
+
+=item add_file_ext (optional)
+
+Your photos on the service can have a names like 'I and my brother on the mountain'.
+In this case you lose information about file extention for these photos.
+This flag indicates that module must add file extentions to photos if then haven't.
+
+Module get this information by doing HEAD request to file and extracting value from
+'Content-Type' header. It is known problem that service sends 'image/jpeg' for *.bmp
+files, so if you have such files (it is unlikely), they will be renamed inproperly.
+
+By default this flag is disabled.
+
+=item default_image_size (optional)
+
+Service stores your images in different sizes. You can specify what concrete size
+of images you want to mount. Value of param can be one of 'orig', 'XL', 'L', 'M',
+'S', 'XS', 'XXS', 'XXXS'. See L<http://api.yandex.ru/fotki/doc/appendices/photo-storage.xml> for detailed description.
+
+If not specified module mount images with that sizes that comes from API (typically it is
+'orig' or 'XS' if original was too big).
+
+=back
+
+=back
+
+=cut
+
 sub new {
     my ($class, $params) = @_;
 
     my $self = $class->SUPER::new;
+
+    for (qw/base_service_url mount_username atompub_client_params/) {
+        if (!defined($params->{$_})) {
+            croak "Not defined param $_";
+        }
+    }
+
     foreach (keys %{$params}) {
         $self->{$_} = $params->{$_};
     }
     $self->{fcache} = {};
-    $self->{client} = Fuse::YandexFotki::AtompubClient->new(
-        timeout        => 10,
-        auth_rsa_url   => $self->{auth_rsa_url},
-        auth_token_url => $self->{auth_token_url},
-    );
-    $self->{content_ua} = LWP::UserAgent->new(timeout => 100);
+
+    my $atompub_client_params = $params->{atompub_client_params} || {};
+    $self->{client} = Fuse::YandexFotki::AtompubClient->new(%{$atompub_client_params});
     $self->{client}->username($self->{username});
     $self->{client}->password($self->{password});
-    $self->{service_url} = $self->{base_service_url} . $self->{mount_username} . "/";
+
+    my $content_ua_params = $params->{content_ua_params} || {};
+    $self->{content_ua} = LWP::UserAgent->new(%{$content_ua_params});
+
+    $self->{base_service_url} =~ s!/$!!;
+    $self->{service_url} = $self->{base_service_url} . "/" . $self->{mount_username} . "/";
 
     return $self;
 }
@@ -167,7 +288,11 @@ sub _getdir_album {
         }
         unless ($finfo) {
             $finfo = {};
-            $finfo->{src_url}  = $entry->content->get_attr('src');
+            my $src_url = $entry->content->get_attr('src');
+            if ($self->{default_image_size}) {
+                $src_url =~ s/_[^_]+$/_$self->{default_image_size}/;
+            }
+            $finfo->{src_url} = $src_url;
             $finfo->{filetype} = 'file';
             $finfo->{type}     = 'photo';
 
@@ -487,9 +612,27 @@ sub _set_filesize_and_ext {
 
 __END__
 
-=head1 NAME
+=head1 OS SUPPORT
 
-Fuse::YandexFotki - mount photos from Yandex Fotki photohosting (http://fotki.yandex.ru) as VFS
+It must works on any OS that supports FUSE and where Fuse.pm works correctly.
+I tested this only on Debian Lenny. I tried to install this on Mac OS, but
+Fuse.pm tests crashes with MacFUSE.
+
+=head1 AUTHORS
+
+Yury Zavarin C<yury.zavarin@gmail.com>.
+
+=head1 LICENSE
+
+This library is free software; you can redistribute it and/or modify it
+under the same terms as Perl itself.
+
+=head1 SEE ALSO
+
+L<Fuse::YandexFotki::Atompub::Client>
+L<Fuse>
+L<Fuse::Class>
+L<http://api.yandex.ru/fotki/>
 
 =cut
 

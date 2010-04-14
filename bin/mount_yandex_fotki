@@ -24,9 +24,6 @@ mount_yandex_fotki [options] [mount_username] mountpoint
 =cut
 
 
-# FIXME: it is temporary
-use lib qw(lib);
-
 use Data::Dumper;
 
 use Getopt::Long;
@@ -35,32 +32,44 @@ use Term::ReadPassword;
 
 use Fuse::YandexFotki;
 
-my %config = (
-    base_service_url   => 'http://api-fotki.yandex.ru/api/users/',
-    auth_rsa_url       => 'http://auth.mobile.yandex.ru/yamrsa/key/',
-    auth_token_url     => 'http://auth.mobile.yandex.ru/yamrsa/token/',
 
-    auth_ua_timeout    => 5,
-    atompub_ua_timeout => 5,
-    content_ua_timeout => 90,
-    ua                 => 'Fuse-YandexFotki/0.0.1',
+my $ua = 'Fuse-YandexFotki/0.0.1';
+my %config = (
+    # Fuse::YandexFotki options
+    base_service_url   => 'http://api-fotki.yandex.ru/api/users/',
+
+    atompub_client_params => {
+        timeout          => 10,
+        agent            => $ua,
+        auth_rsa_url     => 'http://auth.mobile.yandex.ru/yamrsa/key/',
+        auth_token_url   => 'http://auth.mobile.yandex.ru/yamrsa/token/',
+        auth_token_realm => 'fotki.yandex.ru',
+    },
+
+    content_ua_params => {
+        timeout        => 120,
+        agent          => $ua,
+    },
 
     show_filetime      => 1,
     show_filesize      => 1,
     add_file_ext       => 1,
+    default_image_size => 'orig',
     rename_same_fnames => 1,
     create_meta_files  => 1,
-    default_image_size => undef,
 
-    # cache_options in future
 
     # fuse 'mountopts' also here
     mountopts          => "allow_other",
     threaded           => 0,
 
+
+    # and options for mount_yandex_fotki also here
     work_log           => '/dev/null',
     debug_log          => '/dev/null',
 );
+
+
 
 my $fuse;
 {
