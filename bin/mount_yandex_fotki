@@ -51,6 +51,21 @@ my %config = (
         agent          => $ua,
     },
 
+    # see http://api.yandex.ru/fotki/doc/operations-ref/photo-create-via-post.xml for detailed description
+    image_upload => [
+        pub_channel      => 'Fuse-YandexFotki',
+        # app_platform     => ?
+        app_version      => '0.0.1',
+        # tags             => ?        # separated by ',' or ';'
+        yaru             => 0,         # 0 | 1 - to publish or not on ya.ru
+        access_type      => 'public',  # public | friends | private
+        disable_comments => 'false',
+        xxx              => 'false',
+        hide_orig        => 'false',
+        storage_private  => 'false'
+    ],
+    image_upload_url   => 'http://api-fotki.yandex.ru/post/',
+
     show_filetime      => 1,
     show_filesize      => 1,
     add_file_ext       => 1,

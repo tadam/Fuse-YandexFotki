@@ -69,6 +69,14 @@ Hashref of params that will be passed to Atompub client.
 See L<Fuse::YandexFotki::AtompubClient> for getting detailed description of this params.
 Here you pass some options for Atompub UserAgent and urls for authorization.
 
+=item image_upload_url
+
+Here you set a special url for uploading photos.
+
+Now it is ''http://api-fotki.yandex.ru/post/'.
+
+You can also set special C<image_upload> params.
+
 =item username (optional)
 
 Username by which you want to have access to photos. It is a login on Yandex.
@@ -126,6 +134,14 @@ of images you want to mount. Value of param can be one of 'orig', 'XL', 'L', 'M'
 If not specified module mount images with that sizes that comes from API (typically it is
 'orig' or 'XS' if original was too big).
 
+=item image_upload (optional)
+
+Arrayref of different key-values that wiil be used in the time of image uploading.
+For example you can set default values for access type of your new uploaded image.
+You can't set here C<album> and C<title>, this work makes module.
+
+See http://api.yandex.ru/fotki/doc/operations-ref/photo-create-via-post.xml for detailed description.
+
 =back
 
 =back
@@ -137,7 +153,7 @@ sub new {
 
     my $self = $class->SUPER::new;
 
-    for (qw/base_service_url mount_username atompub_client_params/) {
+    for (qw/base_service_url mount_username atompub_client_params image_upload_url/) {
         if (!defined($params->{$_})) {
             croak "Not defined param $_";
         }
@@ -158,6 +174,8 @@ sub new {
 
     $self->{base_service_url} =~ s!/$!!;
     $self->{service_url} = $self->{base_service_url} . "/" . $self->{mount_username} . "/";
+
+    $self->{image_upload} = [] unless ($self->{image_upload});
 
     return $self;
 }
@@ -261,7 +279,6 @@ sub _getdir_collection {
                 $finfo->{edit_url} = $_->href;
             }
         }
-        $finfo->{id} = $entry->get(undef, 'id'); # album uniq id, needed for upload
         $finfo->{filetype} = 'dir';
         $finfo->{type}     = 'album';
 
@@ -457,7 +474,7 @@ sub release {
     #       Also service now incorrectly handles 'Slug' header.
     #         It ignores this header and make photo with title 'Фотка'
     #         instead. So we use alternative url for upload.
-    my $req = POST 'http://api-fotki.yandex.ru/post/',
+    my $req = POST $self->{image_upload_url},
         'Content-Type' => 'form-data',
         'Content' => [
              image => [
@@ -466,19 +483,10 @@ sub release {
                  'Content-Type' => 'image/jpeg',
                  'Content'      => $content,
              ],
-             pub_channel      => 'Fuse-YandexFotki',
-             # app_platform     => ?
-             app_version      => $VERSION,
              title            => $image_title,
-             # tags             => ?
-             yaru             => 0,
-             access_type      => 'public',
              album            => $album_id, # Here must be not <id>, just numeric id
                                             # of this album. Documentation bad in this place.
-             disable_comments => 'false',
-             xxx              => 'false',
-             hide_orig        => 'false',
-             storage_private  => 'false'
+             @{$self->{image_upload}}
         ];
 
     # hack for adding Authorization header
