@@ -22,6 +22,9 @@ my $mb = Module::Build->new(
         'XML::LibXML'        => 0,
     },
     build_requires => {
+         'Test::More' => 0,
+         'Test::Exception' => 0,
+         'Test::Mock::LWP::Dispatch' => '0.0.1',
     }
 );
 

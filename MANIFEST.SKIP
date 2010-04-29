@@ -1,3 +1,5 @@
+debian
+t.pl
 
 #!start included /home/tadam/perl/share/perl/5.10/ExtUtils/MANIFEST.SKIP
 # Avoid version control files.

@@ -5,3 +5,8 @@ lib/Fuse/YandexFotki.pm
 lib/Fuse/YandexFotki/AtompubClient.pm
 MANIFEST			This list of files
 README
+t/client.t
+t/data/client_key_ok
+t/data/client_token_bad
+t/data/client_token_ok
+t/utils.pm

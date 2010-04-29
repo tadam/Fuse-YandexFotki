@@ -1,0 +1,11 @@
+use HTTP::Response;
+
+HTTP::Response->new(
+    200,
+    undef,
+    ['Content-Type' => 'application/xml'],
+    q{<?xml version="1.0"?>
+<response>
+  <token>e78cf1a0ebbb19</token>
+</response>}
+);

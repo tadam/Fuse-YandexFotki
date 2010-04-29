@@ -81,6 +81,7 @@ sub new {
     my $auth_token_realm = delete $params{auth_token_realm};
     $auth_token_realm = '' unless defined($auth_token_realm);
 
+    use Data::Dumper; print Dumper(\%params);
     my $self = $class->SUPER::new(%params);
     $self->{auth_rsa_url} = $auth_rsa_url;
     $self->{auth_token_url} = $auth_token_url;
@@ -156,15 +157,23 @@ sub auth {
         $self->auth_error("Couldn't parse XML from $self->{auth_token_url}: $@");
         return 0;
     }
-    my $token = $token_xml->findnodes("/response/token")->string_value;
-    unless (defined($token)) {
-        $self->auth_error("Couldn't find <token> or <request_id> from $self->{auth_token_url} response. " .
-                          "Response was:\n" . $resp->content);
+    my ($token_node) = $token_xml->findnodes("/response/token");
+    unless ($token_node) {
+        my ($error_node) = $token_xml->findnodes("/response/error");
+        my $error = "Couldn't find <token> or <request_id> from " .
+                    "$self->{auth_token_url} response.";
+        if ($error_node) {
+            $error .= "Error is: " . $error_node->string_value;
+        } else {
+            $error .= "Content was: " . $resp->content;
+        }
+        $self->auth_error("" .
+                          "Response was:\n" . $error);
         return 0;
+    } else {
+        # and finally setting token
+        $self->token($token_node->string_value);
     }
-
-    # and finally setting token
-    $self->token($token);
 
     return 1;
 }

@@ -1,0 +1,11 @@
+use HTTP::Response;
+
+HTTP::Response->new(
+    200,
+    undef,
+    ['Content-Type' => 'application/xml'],
+q{<?xml version="1.0"?>
+<response>
+  <key>A61539CD696C288D87B8620ECB325017B519011ACE9E585D925C2E932BCE298DFEB012049F8BED3977DCD0F4BD3CF82833E30AB64F416207696B8A54A59FE8AF#10001</key>
+  <request_id>12345</request_id>
+</response>});
